@@ -1,0 +1,7 @@
+services:
+  subtitle-merge:
+    build: .
+    container_name: subtitle-merge
+    ports:
+      - "8080:80"
+    restart: unless-stopped
