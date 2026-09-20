@@ -5,6 +5,7 @@ import {
   buildMergedCues,
   defaultStateFor,
   TIME_FIXABLE,
+  validateCueSequence,
   type GroupState,
 } from '../merge';
 import { parseSrt } from '../srt';
@@ -93,5 +94,36 @@ describe('buildMergedCues', () => {
     const states = [resolved({ time: 'custom', customStart: 'bad', customEnd: '00:00:02,000' })];
     const { issues } = buildMergedCues(groups, states, cuesA, cuesB);
     expect(issues.some((i) => i.kind === 'time-parse')).toBe(true);
+  });
+});
+
+describe('validateCueSequence（消重后序列复核）', () => {
+  const c = (start: number, end: number, text: string, groupIndex: number) => ({
+    start,
+    end,
+    text,
+    groupIndex,
+  });
+
+  it('正常序列无问题', () => {
+    const issues = validateCueSequence([c(0, 1000, '甲', 0), c(1000, 2000, '乙', 1)]);
+    expect(issues).toHaveLength(0);
+  });
+
+  it('识别空文本、时长非正、倒退与重叠', () => {
+    const issues = validateCueSequence([
+      c(0, 1000, '', 0), // empty-text
+      c(2000, 2000, 'x', 1), // time-span
+      c(1500, 3000, 'y', 2), // 倒退 time-order
+      c(2500, 4000, 'z', 3), // 重叠 time-order
+    ]);
+    expect(issues.map((i) => i.kind)).toEqual([
+      'empty-text',
+      'time-span',
+      'time-order',
+      'time-order',
+    ]);
+    // time-order / time-span 均可被自动修复覆盖
+    for (const k of ['time-order', 'time-span'] as const) expect(TIME_FIXABLE).toContain(k);
   });
 });

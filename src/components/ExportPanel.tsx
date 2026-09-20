@@ -12,6 +12,12 @@ interface ExportPanelProps {
   wrapApplied: number;
   /** 无法满足断行限制、保持原文的条数 */
   wrapFailed: number;
+  /** 已采纳的滚动字幕链数 */
+  dedupChains: number;
+  /** 已采纳链消除的重复字符数 */
+  dedupSaved: number;
+  /** 已采纳链合并掉的条数 */
+  dedupMergedAway: number;
   preview: string;
   canExport: boolean;
   onExport(): void;
@@ -47,6 +53,15 @@ export function ExportPanel(props: ExportPanelProps) {
           <span className="check-ic">{props.wrapFailed === 0 ? '✓' : '!'}</span>
           智能断行：已应用 {props.wrapApplied} 条
           {props.wrapFailed > 0 && <em>（{props.wrapFailed} 条无法满足限制，保持原文）</em>}
+        </li>
+        <li className={props.dedupChains === 0 ? 'pass' : 'warn'}>
+          <span className="check-ic">✓</span>
+          滚动字幕消重：已采纳 {props.dedupChains} 链
+          {props.dedupChains > 0 && (
+            <em>
+              （合并 {props.dedupMergedAway} 条 · 省 {props.dedupSaved} 字）
+            </em>
+          )}
         </li>
       </ul>
 

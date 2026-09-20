@@ -196,3 +196,56 @@ export function autoFixTimes(cues: MergedCue[]): MergedCue[] {
   }
   return fixed;
 }
+
+export interface SequenceCue {
+  start: number;
+  end: number;
+  text: string;
+  /** 关联的对齐组下标（用于定位） */
+  groupIndex: number;
+}
+
+/**
+ * 对任意 cue 序列（如滚动字幕消重后的结果）重新校验：
+ * 文本非空、时长为正、开始时间单调且不与上一条重叠。
+ * 返回可直接并入 MergeIssue 列表的问题（均属 TIME_FIXABLE 或 empty-text）。
+ */
+export function validateCueSequence(cues: SequenceCue[]): MergeIssue[] {
+  const issues: MergeIssue[] = [];
+  cues.forEach((c, i) => {
+    if (!c.text.trim()) {
+      issues.push({
+        kind: 'empty-text',
+        level: 'error',
+        message: `第 ${i + 1} 条：合并后文本为空`,
+        groupIndex: c.groupIndex,
+      });
+    }
+    if (c.end <= c.start) {
+      issues.push({
+        kind: 'time-span',
+        level: 'error',
+        message: `第 ${i + 1} 条：结束时间必须大于开始时间`,
+        groupIndex: c.groupIndex,
+      });
+    }
+  });
+  for (let i = 1; i < cues.length; i++) {
+    if (cues[i].start < cues[i - 1].start) {
+      issues.push({
+        kind: 'time-order',
+        level: 'error',
+        message: `时间轴非单调：第 ${i + 1} 条开始时间早于第 ${i} 条`,
+        groupIndex: cues[i].groupIndex,
+      });
+    } else if (cues[i].start < cues[i - 1].end) {
+      issues.push({
+        kind: 'time-order',
+        level: 'error',
+        message: `时间重叠：第 ${i + 1} 条与第 ${i} 条`,
+        groupIndex: cues[i].groupIndex,
+      });
+    }
+  }
+  return issues;
+}

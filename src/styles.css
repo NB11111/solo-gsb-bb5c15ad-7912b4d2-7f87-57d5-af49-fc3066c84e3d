@@ -1069,6 +1069,56 @@ body {
   line-height: 1.5;
 }
 
+/* ---------- 滚动字幕消重 ---------- */
+.dedup-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  background: var(--panel);
+}
+
+.dedup-entry .cue-time {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.dedup-entry.ready {
+  border-color: rgba(91, 140, 255, 0.35);
+}
+
+.dedup-chain {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dedup-item {
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: var(--panel);
+}
+
+.dedup-item pre {
+  margin: 3px 0 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+}
+
+.dedup-meta {
+  margin-left: 10px;
+  font-size: 11px;
+  color: var(--amber);
+  font-family: var(--mono);
+}
+
 /* ---------- 响应式 ---------- */
 @media (max-width: 1100px) {
   .layout {

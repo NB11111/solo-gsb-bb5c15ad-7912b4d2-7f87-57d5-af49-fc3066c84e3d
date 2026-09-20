@@ -5,14 +5,16 @@ import {
   buildMergedCues,
   defaultStateFor,
   suggestTextChoice,
-  TIME_FIXABLE,
+  validateCueSequence,
   type GroupState,
   type Resolution,
   type TimeChoice,
 } from './lib/merge';
+import { dedupCues, findScrollChains, type DedupOptions } from './lib/dedup';
 import { SAMPLE_A, SAMPLE_B } from './lib/samples';
 import { parseSrt, serializeSrt, type Cue } from './lib/srt';
 import { smartWrap, type WrapOptions } from './lib/wrap';
+import { DedupPanel } from './components/DedupPanel';
 import { ExportPanel } from './components/ExportPanel';
 import { GroupCard } from './components/GroupCard';
 import { ImportPanel } from './components/ImportPanel';
@@ -50,13 +52,17 @@ export default function App() {
   const [autoFix, setAutoFix] = useState(false);
 
   // 智能断行：视图切换、参数与逐条应用状态（key 为 groupIndex）
-  const [view, setView] = useState<'groups' | 'wrap'>('groups');
+  const [view, setView] = useState<'groups' | 'dedup' | 'wrap'>('groups');
   const [wrapOpts, setWrapOpts] = useState<WrapOptions>({
     maxWidth: 42,
     maxLines: 2,
     lockManualBreaks: true,
   });
   const [wrapApplied, setWrapApplied] = useState<ReadonlySet<number>>(new Set());
+
+  // 滚动字幕消重：参数（间隔 ms / 最小重叠字数）与已采纳链（key 为链首在合并序列中的下标）
+  const [dedupOpts, setDedupOpts] = useState<DedupOptions>({ maxGapMs: 2000, minOverlap: 2 });
+  const [dedupAdopted, setDedupAdopted] = useState<ReadonlySet<number>>(new Set());
 
   const runAlign = (a: Cue[], b: Cue[]) => {
     setAligning(true);
@@ -71,6 +77,7 @@ export default function App() {
       setAutoFix(false);
       setView('groups');
       setWrapApplied(new Set());
+      setDedupAdopted(new Set());
     }, 30);
   };
 
@@ -97,6 +104,7 @@ export default function App() {
     setStates([]);
     setView('groups');
     setWrapApplied(new Set());
+    setDedupAdopted(new Set());
   };
 
   const updateResolution = (gi: number, patch: Partial<Resolution>) => {
@@ -166,30 +174,88 @@ export default function App() {
     [groups, states, cuesA, cuesB],
   );
 
-  // 智能断行：对每条合并结果按当前参数试算；已应用且可满足限制的条目使用断行文本
+  // 滚动字幕消重：按当前参数在合并序列上识别候选链；采纳集合随结果重算自动过滤失效链
+  const scrollChains = useMemo(
+    () => (merged ? findScrollChains(merged.cues, dedupOpts) : []),
+    [merged, dedupOpts],
+  );
+  const validAdopted = useMemo(() => {
+    const heads = new Set(scrollChains.map((ch) => ch.members[0]));
+    const next = new Set<number>();
+    dedupAdopted.forEach((h) => {
+      if (heads.has(h)) next.add(h);
+    });
+    return next;
+  }, [scrollChains, dedupAdopted]);
+  const dedupedCues = useMemo(
+    () => (merged ? dedupCues(merged.cues, scrollChains, validAdopted) : []),
+    [merged, scrollChains, validAdopted],
+  );
+  const dedupStats = useMemo(() => {
+    let chains = 0;
+    let saved = 0;
+    let mergedAway = 0;
+    scrollChains.forEach((ch) => {
+      if (validAdopted.has(ch.members[0])) {
+        chains++;
+        saved += ch.savedChars;
+        mergedAway += ch.members.length - 1;
+      }
+    });
+    return { chains, saved, mergedAway };
+  }, [scrollChains, validAdopted]);
+
+  const applyDedup = (head: number) => setDedupAdopted((prev) => new Set(prev).add(head));
+  const restoreDedup = (head: number) =>
+    setDedupAdopted((prev) => {
+      const next = new Set(prev);
+      next.delete(head);
+      return next;
+    });
+  const applyAllDedup = () => setDedupAdopted(new Set(scrollChains.map((ch) => ch.members[0])));
+  const restoreAllDedup = () => setDedupAdopted(new Set());
+
+  // 消重后的序列再做时间 / 空文本校验（合并可能改变相邻间隔）
+  const dedupIssues = useMemo(
+    () =>
+      validateCueSequence(
+        dedupedCues.map((c) => ({
+          start: c.start,
+          end: c.end,
+          text: c.text,
+          groupIndex: merged?.cues[c.keyIndex]?.groupIndex ?? c.keyIndex,
+        })),
+      ),
+    [dedupedCues, merged],
+  );
+
+  // 智能断行：对每条（消重后的）合并结果按当前参数试算；已应用且可满足限制的条目使用断行文本
   const wrapResults = useMemo(
-    () => (merged ? merged.cues.map((c) => smartWrap(c.text, wrapOpts)) : []),
-    [merged, wrapOpts],
+    () => dedupedCues.map((c) => smartWrap(c.text, wrapOpts)),
+    [dedupedCues, wrapOpts],
   );
   const wrappedCues = useMemo(() => {
-    if (!merged) return [];
-    return merged.cues.map((c, i) => {
+    return dedupedCues.map((c, i) => {
       const r = wrapResults[i];
-      return r.ok && wrapApplied.has(c.groupIndex) ? { ...c, text: r.text } : c;
+      const gi = merged?.cues[c.keyIndex]?.groupIndex ?? c.keyIndex;
+      return {
+        start: c.start,
+        end: c.end,
+        text: r.ok && wrapApplied.has(gi) ? r.text : c.text,
+        groupIndex: gi,
+      };
     });
-  }, [merged, wrapResults, wrapApplied]);
+  }, [dedupedCues, wrapResults, wrapApplied, merged]);
   const wrapStats = useMemo(() => {
     let appliedCount = 0;
     let failed = 0;
-    if (merged) {
-      merged.cues.forEach((c, i) => {
-        const r = wrapResults[i];
-        if (!r.ok) failed++;
-        else if (r.changed && wrapApplied.has(c.groupIndex)) appliedCount++;
-      });
-    }
+    wrapResults.forEach((r, i) => {
+      const gi = merged?.cues[dedupedCues[i].keyIndex]?.groupIndex ?? dedupedCues[i].keyIndex;
+      if (!r.ok) failed++;
+      else if (r.changed && wrapApplied.has(gi)) appliedCount++;
+    });
     return { appliedCount, failed };
-  }, [merged, wrapResults, wrapApplied]);
+  }, [wrapResults, wrapApplied, dedupedCues, merged]);
 
   const applyWrap = (gi: number) => setWrapApplied((prev) => new Set(prev).add(gi));
   const restoreWrap = (gi: number) =>
@@ -199,11 +265,12 @@ export default function App() {
       return next;
     });
   const applyAllWrap = () => {
-    if (!merged) return;
     const next = new Set<number>();
-    merged.cues.forEach((c, i) => {
-      const r = wrapResults[i];
-      if (r.ok && r.changed) next.add(c.groupIndex);
+    wrapResults.forEach((r, i) => {
+      if (r.ok && r.changed) {
+        const gi = merged?.cues[dedupedCues[i].keyIndex]?.groupIndex ?? dedupedCues[i].keyIndex;
+        next.add(gi);
+      }
     });
     setWrapApplied(next);
   };
@@ -213,15 +280,16 @@ export default function App() {
     () => (autoFix ? autoFixTimes(wrappedCues) : wrappedCues),
     [wrappedCues, autoFix],
   );
-  const issues = useMemo(
-    () =>
-      merged
-        ? autoFix
-          ? merged.issues.filter((i) => !TIME_FIXABLE.includes(i.kind))
-          : merged.issues
-        : [],
-    [merged, autoFix],
-  );
+  const issues = useMemo(() => {
+    if (!merged) return [];
+    // 决策阶段问题（仅保留消重后序列校验无法覆盖的类型）+ 消重后序列校验结果
+    const structural = merged.issues.filter(
+      (i) => i.kind === 'time-parse' || i.kind === 'missing-source',
+    );
+    // time-span / time-order / empty-text 均以消重后序列重新校验为准
+    const seq = autoFix ? dedupIssues.filter((i) => i.kind !== 'time-order' && i.kind !== 'time-span') : dedupIssues;
+    return [...structural, ...seq];
+  }, [merged, dedupIssues, autoFix]);
 
   const conflictCount = states.filter((s) => s.isConflict).length;
   const resolvedCount = states.filter((s) => s.isConflict && s.resolved).length;
@@ -329,6 +397,13 @@ export default function App() {
                   <span className="tab-count">{groups.length}</span>
                 </button>
                 <button
+                  className={`tab ${view === 'dedup' ? 'active' : ''}`}
+                  onClick={() => setView('dedup')}
+                >
+                  滚动字幕消重
+                  <span className="tab-count">{dedupStats.chains}</span>
+                </button>
+                <button
                   className={`tab ${view === 'wrap' ? 'active' : ''}`}
                   onClick={() => setView('wrap')}
                 >
@@ -373,9 +448,28 @@ export default function App() {
                     )}
                   </div>
                 </>
+              ) : view === 'dedup' ? (
+                <DedupPanel
+                  cues={merged?.cues ?? []}
+                  chains={scrollChains}
+                  adopted={validAdopted}
+                  maxGapMs={dedupOpts.maxGapMs}
+                  minOverlap={dedupOpts.minOverlap}
+                  onMaxGapMs={(v) => setDedupOpts((o) => ({ ...o, maxGapMs: v }))}
+                  onMinOverlap={(v) => setDedupOpts((o) => ({ ...o, minOverlap: v }))}
+                  onApply={applyDedup}
+                  onRestore={restoreDedup}
+                  onApplyAll={applyAllDedup}
+                  onRestoreAll={restoreAllDedup}
+                />
               ) : (
                 <WrapPanel
-                  cues={merged?.cues ?? []}
+                  cues={dedupedCues.map((c, i) => ({
+                    start: c.start,
+                    end: c.end,
+                    text: c.text,
+                    groupIndex: merged?.cues[c.keyIndex]?.groupIndex ?? i,
+                  }))}
                   results={wrapResults}
                   applied={wrapApplied}
                   options={wrapOpts}
@@ -398,6 +492,9 @@ export default function App() {
               cueCount={finalCues.length}
               wrapApplied={wrapStats.appliedCount}
               wrapFailed={wrapStats.failed}
+              dedupChains={dedupStats.chains}
+              dedupSaved={dedupStats.saved}
+              dedupMergedAway={dedupStats.mergedAway}
               preview={preview}
               canExport={canExport}
               onExport={() => download('merged.srt', '\uFEFF' + serializeSrt(finalCues))}
