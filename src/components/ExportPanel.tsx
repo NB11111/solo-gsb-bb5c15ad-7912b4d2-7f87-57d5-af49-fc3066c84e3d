@@ -8,6 +8,12 @@ interface ExportPanelProps {
   autoFix: boolean;
   onAutoFix(v: boolean): void;
   cueCount: number;
+  /** 识别出的滚动字幕链总数 */
+  dedupChains: number;
+  /** 已采纳消重的链数 */
+  dedupApplied: number;
+  /** 已采纳链累计节省的重复字符数 */
+  dedupSaved: number;
   /** 已应用智能断行的条数 */
   wrapApplied: number;
   /** 无法满足断行限制、保持原文的条数 */
@@ -42,6 +48,12 @@ export function ExportPanel(props: ExportPanelProps) {
         <li className="pass">
           <span className="check-ic">✓</span>
           输出 {props.cueCount} 条字幕（导出时从 1 重新编号）
+        </li>
+        <li className={props.dedupChains === 0 ? 'pass' : props.dedupApplied > 0 ? 'pass' : 'warn'}>
+          <span className="check-ic">{props.dedupChains === 0 || props.dedupApplied > 0 ? '✓' : '!'}</span>
+          滚动字幕消重：已采纳 {props.dedupApplied}/{props.dedupChains} 链
+          {props.dedupApplied > 0 && <em>（节省 {props.dedupSaved} 个重复字符）</em>}
+          {props.dedupChains > 0 && props.dedupApplied === 0 && <em>（尚未采纳，预览为未消重结果）</em>}
         </li>
         <li className={props.wrapFailed === 0 ? 'pass' : 'warn'}>
           <span className="check-ic">{props.wrapFailed === 0 ? '✓' : '!'}</span>
